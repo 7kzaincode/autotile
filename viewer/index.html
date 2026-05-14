@@ -448,13 +448,18 @@
   </div>
 
   <div id="generate" class="panel">
-    <h3>Generate from Photo</h3>
+    <h3>Generate from Reference Photos</h3>
 
     <label>Front Face Photo (Required)</label>
     <input id="photo-input" type="file" accept="image/*" />
     <details open>
       <summary>Body / Side Photos</summary>
-      <div class="form-hint">Pets need at least one side full-body photo. Add both sides when markings are different.</div>
+      <div class="form-hint">Pets need a front photo plus at least one side full-body photo. Add both sides/back when markings are different.</div>
+      <label>Auto-sort Reference Set</label>
+      <input id="photo-reference-batch-input" type="file" accept="image/*" multiple />
+      <div id="photo-reference-batch-status" class="form-hint">
+        Select or drop files named like cat front, cat left side, cat right side, cat back.
+      </div>
       <label>Back</label>
       <input id="photo-back-input" type="file" accept="image/*" />
       <label>Left Side Full Body</label>

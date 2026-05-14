@@ -473,17 +473,15 @@ def add_anatomical_features(payload: dict, photo_path: str | Path,
     try:
         before = len(payload.get("bricks") or [])
         face_meta = {"added": 0, "reason": "not attempted"}
-        tried_face_module = False
-        if body_photo_path is not None and (body_view or "").lower() in {"left", "right", "side"}:
-            from pet_face_composer import compose_pet_face_module
-            tried_face_module = True
-            payload, face_meta = compose_pet_face_module(
-                payload, photo_path, feat,
-                body_photo_path=body_photo_path,
-                body_gpt_data=body_gpt_data,
-                body_view=body_view,
-            )
-        if not face_meta.get("added") and not tried_face_module:
+        side_body_pet = body_photo_path is not None and (body_view or "").lower() in {"left", "right", "side"}
+        if side_body_pet:
+            face_meta = {
+                "added": 0,
+                "reason": "side-body pet mesh has no guaranteed front-face surface; synthetic face overlay disabled",
+            }
+            face_map_applied = True
+            print(f"[face-map] skipped: {face_meta['reason']}")
+        else:
             from face_map import apply_pet_face_map
             payload, face_meta = apply_pet_face_map(
                 payload, photo_path, feat, mirror_features=mirror_features,
@@ -494,15 +492,13 @@ def add_anatomical_features(payload: dict, photo_path: str | Path,
         added = len(payload.get("bricks") or []) - before
         if added:
             face_map_applied = True
-            label = "face-module" if face_meta.get("source") == "front-face-module" else "face-map"
-            print(f"[{label}] added {added} protected face tile(s) "
+            print(f"[face-map] added {added} protected face piece(s) "
                   f"plane={face_meta.get('face_plane')} "
                   f"eye_size={face_meta.get('eye_size')} centers={face_meta.get('eye_centers')} "
                   f"anchor={face_meta.get('source') or face_meta.get('target', {}).get('source', 'front-photo')}")
         else:
-            print(f"[face-map] no eye overlay: {face_meta.get('reason')}")
-            if tried_face_module:
-                face_map_applied = True
+            if not side_body_pet:
+                print(f"[face-map] no eye overlay: {face_meta.get('reason')}")
     except Exception as e:
         print(f"[face-map] failed, falling back to legacy dots: {e}")
         eyes = feat["eyes"]

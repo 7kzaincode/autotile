@@ -266,12 +266,40 @@ def _clear_cache_dir(d: Path) -> int:
     return removed
 
 
+def _artifact_cache_kind(url: str) -> str | None:
+    if url.startswith("/photos/"):
+        return "photos"
+    if url.startswith("/meshes/"):
+        return "meshes"
+    if url.startswith("/output/"):
+        return "outputs"
+    return None
+
+
+def _clear_run_references(kinds: set[str], *, all_cleared: bool = False) -> None:
+    """Keep the Run pane honest after cache files are deleted."""
+    if all_cleared:
+        LAST_RUN.clear()
+        LAST_RUN.update({"status": "idle", "artifacts": [], "updated_ts": time.time()})
+        return
+
+    artifacts = [
+        a for a in (LAST_RUN.get("artifacts") or [])
+        if _artifact_cache_kind(str(a.get("url") or "")) not in kinds
+    ]
+    LAST_RUN["artifacts"] = artifacts
+    if not artifacts and kinds & {"photos", "meshes", "outputs"}:
+        LAST_RUN.update({"status": "idle", "stage": None})
+    LAST_RUN["updated_ts"] = time.time()
+
+
 @router.delete("/api/cache")
 def api_cache_clear_all():
     removed = {
         kind: _clear_cache_dir(path)
         for kind, path in _cache_table().items()
     }
+    _clear_run_references(set(removed), all_cleared=True)
     return {"cleared": "all", "removed": removed, "total_removed": sum(removed.values())}
 
 
@@ -281,4 +309,5 @@ def api_cache_clear(kind: str):
     if kind not in table:
         raise HTTPException(400, f"unknown cache kind: {kind}")
     removed = _clear_cache_dir(table[kind])
+    _clear_run_references({kind})
     return {"cleared": kind, "removed": removed}

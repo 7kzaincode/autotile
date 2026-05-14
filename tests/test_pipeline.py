@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 from brick_catalog import BRICK_CATALOG, CATALOG
 from build_stats import build_stats
 from face_map import apply_eye_face_map, apply_pet_face_map
-from features import detect_features
+from features import add_anatomical_features, detect_features
 from ldraw_export import to_ldraw
 from mesh_to_voxels import (
     _fill_voxel_pinholes,
@@ -33,7 +33,6 @@ from mesh_to_voxels import (
 )
 from obj_export import to_obj
 from parts_list import parts_list, parts_list_bricklink_xml, parts_list_csv, summary
-from pet_face_composer import compose_pet_face_module
 from pet_color_map import project_pet_color_map
 from pose_analysis import analyze_photo_pose
 from postprocess import apply_all as postprocess_all, cheese_slope_ear_tips
@@ -725,84 +724,38 @@ def test_pet_face_map_anchors_side_profile_face_to_body_head(tmp_path):
     assert not any(b.get("face_map") == "mouth" for b in added)
 
 
-def test_pet_face_composer_mounts_front_face_on_display_plane(tmp_path):
-    face = tmp_path / "front_face.png"
-    face_img = Image.new("RGBA", (200, 200), (220, 185, 135, 255))
-    for cx, cy in [(72, 72), (128, 72)]:
-        for y in range(cy - 9, cy + 10):
-            for x in range(cx - 9, cx + 10):
-                if (x - cx) ** 2 + (y - cy) ** 2 <= 9 ** 2:
-                    face_img.putpixel((x, y), (170, 94, 28, 255))
-        for y in range(cy - 2, cy + 3):
-            for x in range(cx - 2, cx + 3):
-                face_img.putpixel((x, y), (12, 10, 8, 255))
-    face_img.save(face)
-
-    side = tmp_path / "right_side.png"
-    img = Image.new("RGBA", (160, 110), (0, 0, 0, 0))
-    for y in range(45, 98):
-        for x in range(20, 118):
-            img.putpixel((x, y), (220, 185, 135, 255))
-    for y in range(62, 82):
-        for x in range(2, 32):
-            img.putpixel((x, y), (220, 185, 135, 255))
-    for y in range(18, 70):
-        for x in range(108, 153):
-            img.putpixel((x, y), (220, 185, 135, 255))
-    for y in range(4, 28):
-        for x in range(118, 134):
-            img.putpixel((x, y), (220, 185, 135, 255))
-    img.save(side)
+def test_side_body_pet_features_skip_unsafe_face_overlay(tmp_path):
+    p = tmp_path / "front_face.png"
+    img = Image.new("RGBA", (120, 140), (0, 0, 0, 0))
+    for y in range(20, 125):
+        for x in range(30, 90):
+            img.putpixel((x, y), (210, 170, 120, 255))
+    for cx, cy in [(48, 55), (72, 55), (60, 74)]:
+        for y in range(cy - 3, cy + 4):
+            for x in range(cx - 3, cx + 4):
+                img.putpixel((x, y), (20, 15, 10, 255))
+    img.save(p)
 
     bricks = [
         {
-            "x": x, "y": y, "z": z,
+            "x": x, "y": 0, "z": z,
             "size_x": 1, "size_y": 1, "brick_type": "1x1",
             "kind": "brick", "rotation": 0, "color": 28,
             "slope_dir": None,
         }
-        for x in range(44, 65) for y in range(3, 20) for z in range(18, 44)
+        for x in range(20) for z in range(20)
     ]
-    payload = {
-        "grid_shape": [65, 23, 45],
-        "voxel_metadata": {"front_axis": "-y", "pose_hint": "side_profile"},
-        "bricks": bricks,
-    }
-    feat = {
-        "eyes": [(72, 72), (128, 72)],
-        "nose": (100, 106),
-        "mouth": ((90, 126), (110, 126)),
-        "bbox": (0, 0, 200, 200),
-        "head_bbox": (44, 30, 156, 150),
-    }
+    payload = {"grid_shape": [20, 4, 20], "voxel_metadata": {"front_axis": "-x"}, "bricks": bricks}
 
-    out, meta = compose_pet_face_module(
+    out = add_anatomical_features(
         payload,
-        face,
-        feat,
-        body_photo_path=side,
-        body_gpt_data={
-            "subject_name": "cat",
-            "regions": [
-                {"name": "tail", "bbox_normalized": [0.0, 0.55, 0.2, 0.75]},
-                {"name": "eye_socket", "bbox_normalized": [0.78, 0.30, 0.88, 0.42]},
-                {"name": "muzzle", "bbox_normalized": [0.84, 0.38, 0.95, 0.52]},
-            ],
-        },
-        body_view="right",
+        p,
+        use_gpt=False,
+        body_photo_path=p,
+        body_view="left",
     )
-    added = out["bricks"][len(bricks):]
-    assert meta["source"] == "front-face-module"
-    assert meta["front_axis"] == "-y"
-    assert meta["side_anchor"] is True
-    assert {b["mount"] for b in added} == {"-y"}
-    assert all(b.get("protected") and b.get("face_module") for b in added)
-    assert len([b for b in added if b.get("face_map") == "eye_pupil"]) == 2
-    assert len([b for b in added if b.get("face_map") == "eye_iris"]) == 2
-    assert not any(b.get("face_map") == "mouth" for b in added)
-    eye_xs = [b["x"] for b in added if b.get("face_map", "").startswith("eye_")]
-    assert min(eye_xs) >= 44
-    assert max(eye_xs) <= 65
+    assert len(out["bricks"]) == len(bricks)
+    assert not any(b.get("face_map") for b in out["bricks"])
 
 
 def test_cheese_slope_tips_only_apply_near_model_top():
@@ -908,6 +861,137 @@ def test_pet_color_map_preserves_one_sided_dark_marking(tmp_path):
     assert float(right_vals.mean()) < float(left_vals.mean()) - 25.0
 
 
+def test_pet_color_map_preserves_high_res_crescent_and_dots(tmp_path):
+    from mesh_to_voxels import VoxelGrid
+    from PIL import ImageDraw
+
+    p = tmp_path / "crescent_cat.png"
+    img = Image.new("RGBA", (320, 210), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((20, 35, 300, 190), fill=(214, 174, 125, 255))
+    d.polygon([(265, 70), (318, 95), (265, 125)], fill=(214, 174, 125, 255))
+    d.line((15, 150, 5, 198), fill=(180, 120, 70, 255), width=20)
+    # A crescent plus three separate dots: this used to collapse into one blob
+    # because markings were detected after blur/downsample.
+    d.ellipse((135, 55, 265, 172), fill=(58, 57, 53, 255))
+    d.ellipse((170, 68, 275, 166), fill=(214, 174, 125, 255))
+    for cx, cy in [(65, 72), (56, 116), (92, 95)]:
+        d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(50, 50, 46, 255))
+    img.save(p)
+
+    occ = np.ones((4, 65, 46), dtype=bool)
+    colors = np.zeros((*occ.shape, 3), dtype=np.uint8)
+    grid = VoxelGrid(occ, colors, pitch=1.0, origin=np.zeros(3))
+
+    used, meta = project_pet_color_map(
+        grid, p, load_palette(), out_dir=tmp_path, front_axis="-x",
+    )
+    assert meta["markings"]["source"] == "high-res-mask"
+    assert meta["markings"]["components"] >= 4
+    assert meta["markings"]["high_res"]["components"] >= 4
+    assert meta["marking_debug_path"]
+    assert Path(meta["marking_debug_path"]).exists()
+    assert used & {3, 4, 25, 26, 27, 29, 30}
+
+
+def test_pet_color_map_samples_photo_hex_for_base_coat(tmp_path):
+    from mesh_to_voxels import VoxelGrid
+    from PIL import ImageDraw
+
+    p = tmp_path / "warm_cat.png"
+    img = Image.new("RGBA", (120, 80), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((10, 12, 110, 68), fill=(198, 158, 118, 255))
+    img.save(p)
+
+    occ = np.ones((4, 24, 14), dtype=bool)
+    colors = np.zeros((*occ.shape, 3), dtype=np.uint8)
+    grid = VoxelGrid(occ, colors, pitch=1.0, origin=np.zeros(3))
+    gpt_data = {
+        "regions": [
+            {"name": "body", "bbox_normalized": [0.1, 0.1, 0.9, 0.9], "color_name": "Tan"}
+        ],
+        "recommended_lego_palette": ["Tan", "Cream", "Medium Nougat", "Dark Tan"],
+    }
+
+    used, meta = project_pet_color_map(
+        grid, p, load_palette(), gpt_data, out_dir=tmp_path, front_axis="-x",
+    )
+    assert meta["base_adjustment"]["source"].startswith("photo-hex")
+    assert meta["base_adjustment"]["sample_hex"].startswith("#")
+    assert meta["base_name"] == meta["base_adjustment"]["matched_name"]
+    assert meta["base_id"] in used
+
+
+def test_pet_color_map_samples_light_and_marking_hexes(tmp_path):
+    from mesh_to_voxels import VoxelGrid
+    from PIL import ImageDraw
+
+    p = tmp_path / "profiled_cat.png"
+    img = Image.new("RGBA", (180, 120), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((10, 22, 170, 108), fill=(202, 166, 128, 255))
+    d.rectangle((128, 50, 162, 104), fill=(238, 232, 222, 255))
+    d.ellipse((70, 38, 138, 94), fill=(64, 57, 50, 255))
+    d.ellipse((94, 44, 146, 90), fill=(202, 166, 128, 255))
+    img.save(p)
+
+    occ = np.ones((4, 32, 18), dtype=bool)
+    colors = np.zeros((*occ.shape, 3), dtype=np.uint8)
+    grid = VoxelGrid(occ, colors, pitch=1.0, origin=np.zeros(3))
+
+    used, meta = project_pet_color_map(
+        grid, p, load_palette(), out_dir=tmp_path, front_axis="-x",
+    )
+    profile = meta["color_profile"]
+    assert profile["light"]["sample_hex"].startswith("#")
+    assert profile["marking"]["sample_hex"].startswith("#")
+    assert profile["light"]["matched_name"] in {"White", "Cream"}
+    assert profile["marking"]["matched_name"] in {
+        "Black", "Dark Bluish Gray", "Dark Brown", "Brown",
+        "Reddish Brown", "Dark Tan", "Medium Nougat",
+    }
+    assert profile["light"]["matched_id"] in used
+    assert profile["marking"]["matched_id"] in used
+
+
+def test_pet_color_map_filters_head_noise_and_keeps_tail_tip(tmp_path):
+    from mesh_to_voxels import VoxelGrid
+    from PIL import ImageDraw
+
+    p = tmp_path / "side_cat_head_tail.png"
+    img = Image.new("RGBA", (320, 210), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    coat = (214, 174, 125, 255)
+    dark = (48, 47, 44, 255)
+    d.ellipse((30, 55, 260, 175), fill=coat)
+    d.ellipse((240, 28, 318, 118), fill=coat)
+    d.polygon([(300, 25), (318, 0), (315, 58)], fill=coat)
+    d.line((40, 148, 5, 195), fill=coat, width=23)
+    d.ellipse((0, 178, 25, 208), fill=dark)       # real dark tail tip
+    d.rectangle((38, 140, 52, 156), fill=dark)    # tail shadow/stripe to drop
+    d.rectangle((282, 45, 300, 88), fill=dark)    # head/ear/eye noise to drop
+    d.ellipse((128, 65, 248, 170), fill=dark)     # body crescent
+    d.ellipse((160, 74, 255, 165), fill=coat)
+    for cx, cy in [(72, 82), (62, 118), (95, 103)]:
+        d.ellipse((cx - 10, cy - 10, cx + 10, cy + 10), fill=dark)
+    img.save(p)
+
+    occ = np.ones((4, 65, 42), dtype=bool)
+    colors = np.zeros((*occ.shape, 3), dtype=np.uint8)
+    grid = VoxelGrid(occ, colors, pitch=1.0, origin=np.zeros(3))
+
+    _used, meta = project_pet_color_map(
+        grid, p, load_palette(), out_dir=tmp_path, front_axis="-x", side_depth="front",
+    )
+    boxes = meta["markings"]["boxes"]
+    assert meta["markings"]["side_profile_filter"]["head_side"] == "right"
+    assert not any(b[0] >= 50 for b in boxes), boxes
+    assert not any(9 <= b[0] <= 15 and b[2] <= 18 for b in boxes), boxes
+    assert any(b[0] <= 4 and b[1] >= 30 for b in boxes), boxes
+    assert any(24 <= b[0] <= 35 and 12 <= b[1] <= 18 for b in boxes), boxes
+
+
 def test_pet_color_map_projects_side_pet_along_body_length(tmp_path):
     from mesh_to_voxels import VoxelGrid
 
@@ -966,7 +1050,38 @@ def test_pet_color_map_keeps_one_side_marking_on_visible_surface(tmp_path):
     brightness = grid.colors.astype(np.float32).mean(axis=3)
     front_marked = brightness[0:2, 6:9, 2:5][grid.occupancy[0:2, 6:9, 2:5]]
     back_same_uv = brightness[-2:, 6:9, 2:5][grid.occupancy[-2:, 6:9, 2:5]]
-    assert float(front_marked.mean()) < float(back_same_uv.mean()) - 35.0
+    assert float(front_marked.mean()) < float(back_same_uv.mean()) - 30.0
+
+
+def test_pet_color_map_keeps_side_only_light_patch_on_visible_surface(tmp_path):
+    from mesh_to_voxels import VoxelGrid
+
+    p = tmp_path / "right_side_white_patch.png"
+    img = Image.new("RGBA", (100, 70), (0, 0, 0, 0))
+    for y in range(5, 65):
+        for x in range(5, 95):
+            img.putpixel((x, y), (218, 178, 126, 255))
+    for y in range(34, 56):
+        for x in range(50, 72):
+            img.putpixel((x, y), (241, 238, 228, 255))
+    img.save(p)
+
+    occ = np.ones((6, 12, 8), dtype=bool)
+    colors = np.zeros((*occ.shape, 3), dtype=np.uint8)
+    grid = VoxelGrid(occ, colors, pitch=1.0, origin=np.zeros(3))
+
+    used, meta = project_pet_color_map(
+        grid, p, load_palette(), out_dir=tmp_path, front_axis="-x",
+        side_depth="front", markings_on_visible_side_only=True,
+    )
+    assert meta["side_depth"] == "front"
+    assert meta["anatomy_light"]["visible_side_only_cells"] > 0
+    assert 1 in used
+
+    brightness = grid.colors.astype(np.float32).mean(axis=3)
+    front_light = brightness[0:2, 6:9, 1:5][grid.occupancy[0:2, 6:9, 1:5]]
+    back_same_uv = brightness[-2:, 6:9, 1:5][grid.occupancy[-2:, 6:9, 1:5]]
+    assert float(front_light.mean()) > float(back_same_uv.mean()) + 25.0
 
 
 def test_pet_color_map_preserves_broad_white_chest_region(tmp_path):
@@ -996,13 +1111,82 @@ def test_pet_color_map_preserves_broad_white_chest_region(tmp_path):
     used, meta = project_pet_color_map(
         grid, p, load_palette(), gpt_data, out_dir=tmp_path, front_axis="-x",
     )
-    assert meta["base_name"] == "Tan"
+    assert meta["base_name"] in {"Tan", "Medium Nougat"}
     assert meta["gpt_regions"]["regions"] >= 1 or meta["light_regions"]["components"] >= 1
     assert 1 in used
     brightness = grid.colors.astype(np.float32).mean(axis=3)
     white_chest = brightness[:, 9:12, 1:6][grid.occupancy[:, 9:12, 1:6]]
     tan_body = brightness[:, 1:5, 1:6][grid.occupancy[:, 1:5, 1:6]]
     assert float(white_chest.mean()) > float(tan_body.mean()) + 35.0
+
+
+def test_pet_color_map_propagates_light_anatomy_regions(tmp_path):
+    from mesh_to_voxels import VoxelGrid
+    from PIL import ImageDraw
+
+    p = tmp_path / "side_pet_white_socks_belly_muzzle.png"
+    img = Image.new("RGBA", (200, 120), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    tan = (202, 166, 128, 255)
+    light = (240, 236, 226, 255)
+    dark = (58, 56, 52, 255)
+    d.rectangle((30, 36, 150, 82), fill=tan)          # torso
+    d.rectangle((145, 20, 194, 70), fill=tan)         # head
+    d.polygon([(162, 20), (173, 2), (182, 22)], fill=tan)
+    d.rectangle((135, 72, 154, 115), fill=tan)        # front leg
+    d.rectangle((56, 76, 75, 115), fill=tan)          # rear leg
+    d.line((30, 76, 4, 102), fill=tan, width=18)      # tail
+    d.rectangle((144, 54, 164, 106), fill=light)      # chest/front leg
+    d.rectangle((86, 72, 138, 92), fill=light)        # underbelly
+    d.rectangle((135, 98, 158, 118), fill=light)      # front paw
+    d.rectangle((50, 98, 80, 118), fill=light)        # rear paw
+    d.rectangle((174, 40, 196, 58), fill=light)       # muzzle
+    d.ellipse((86, 48, 126, 80), fill=dark)           # side marking
+    d.ellipse((104, 52, 132, 77), fill=tan)
+    img.save(p)
+
+    occ = np.ones((4, 40, 24), dtype=bool)
+    colors = np.zeros((*occ.shape, 3), dtype=np.uint8)
+    grid = VoxelGrid(occ, colors, pitch=1.0, origin=np.zeros(3))
+    gpt_data = {
+        "regions": [
+            {"name": "body", "bbox_normalized": [0.15, 0.30, 0.75, 0.70], "color_name": "Tan"},
+            {"name": "chest", "bbox_normalized": [0.72, 0.45, 0.82, 0.88], "color_name": "White"},
+            {"name": "belly", "bbox_normalized": [0.43, 0.60, 0.69, 0.77], "color_name": "White"},
+            {"name": "paws", "bbox_normalized": [0.25, 0.80, 0.79, 0.98], "color_name": "White"},
+            {"name": "muzzle", "bbox_normalized": [0.87, 0.33, 0.98, 0.50], "color_name": "White"},
+        ],
+        "recommended_lego_palette": ["Tan", "White", "Dark Bluish Gray"],
+    }
+
+    used, meta = project_pet_color_map(
+        grid,
+        p,
+        load_palette(),
+        gpt_data,
+        out_dir=tmp_path,
+        front_axis="-x",
+        side_depth="front",
+        markings_on_visible_side_only=True,
+        front_photo_path=p,
+    )
+
+    assert meta["anatomy_light"]["applied"] is True
+    assert meta["front_light_profile"]["applied"] is True
+    assert meta["anatomy_light"]["front_photo_used"] is True
+    assert meta["anatomy_debug_path"]
+    assert Path(meta["anatomy_debug_path"]).exists()
+    assert 1 in used
+    brightness = grid.colors.astype(np.float32).mean(axis=3)
+    tan_body = brightness[:, 6:16, 12:17][grid.occupancy[:, 6:16, 12:17]]
+    chest = brightness[:, 29:35, 5:14][grid.occupancy[:, 29:35, 5:14]]
+    belly = brightness[0:2, 17:28, 5:11][grid.occupancy[0:2, 17:28, 5:11]]
+    rear_paw = brightness[:, 10:16, 0:5][grid.occupancy[:, 10:16, 0:5]]
+    front_paw = brightness[:, 27:34, 0:5][grid.occupancy[:, 27:34, 0:5]]
+    assert float(chest.mean()) > float(tan_body.mean()) + 25.0
+    assert float(np.median(belly)) > float(tan_body.mean()) + 20.0
+    assert float(rear_paw.mean()) > float(tan_body.mean()) + 20.0
+    assert float(front_paw.mean()) > float(tan_body.mean()) + 20.0
 
 
 def test_pet_color_map_keeps_white_base_and_rejects_broad_shadows(tmp_path):

@@ -35,6 +35,11 @@ from mesh_input import prepare_mesh_input
 from obj_export import to_obj
 from parts_list import parts_list, parts_list_bricklink_xml, parts_list_csv, summary
 from pet_color_map import project_pet_color_map
+from pet_reference_prompts import (
+    build_identity_extraction_prompt,
+    build_qa_prompt,
+    build_reference_prompt_bundle,
+)
 from pose_analysis import analyze_photo_pose, is_pet_subject
 from postprocess import apply_all as postprocess_all
 from texture_projection import project_photo
@@ -91,6 +96,57 @@ def api_presets():
     return {"order": list_presets(), "presets": PRESETS}
 
 
+def _identity_profile_from_payload(payload: dict | None) -> dict:
+    payload = payload or {}
+    profile = payload.get("animal_identity_profile", payload)
+    if not isinstance(profile, dict):
+        raise HTTPException(400, "animal_identity_profile must be an object")
+    return profile
+
+
+@app.post("/api/pet-reference/identity-prompt")
+def api_pet_reference_identity_prompt(payload: dict | None = Body(None)):
+    """Return the Stage 1 prompt for extracting a pet identity JSON profile."""
+    payload = payload or {}
+    source_files = payload.get("source_files") or []
+    if isinstance(source_files, str):
+        source_files = [source_files]
+    if not isinstance(source_files, list):
+        raise HTTPException(400, "source_files must be a list of filenames")
+    return {"prompt": build_identity_extraction_prompt(source_files)}
+
+
+@app.post("/api/pet-reference/prompts")
+def api_pet_reference_prompts(payload: dict = Body(...)):
+    """Return the full standardized multi-view reference prompt bundle."""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "request body must be a JSON object")
+    profile = _identity_profile_from_payload(payload)
+    source_files = payload.get("source_files") or []
+    generated_files = payload.get("generated_files")
+    if isinstance(source_files, str):
+        source_files = [source_files]
+    if generated_files is not None and isinstance(generated_files, str):
+        generated_files = [generated_files]
+    return build_reference_prompt_bundle(
+        profile,
+        source_files=source_files,
+        generated_files=generated_files,
+    )
+
+
+@app.post("/api/pet-reference/qa-prompt")
+def api_pet_reference_qa_prompt(payload: dict = Body(...)):
+    """Return the QA prompt for generated front/right/left/back references."""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "request body must be a JSON object")
+    profile = _identity_profile_from_payload(payload)
+    generated_files = payload.get("generated_files")
+    if generated_files is not None and isinstance(generated_files, str):
+        generated_files = [generated_files]
+    return {"prompt": build_qa_prompt(profile, generated_files=generated_files)}
+
+
 def _safe_filename(name: str, label: str = "filename") -> str:
     """Reject anything with path separators or parent refs. Returns the name."""
     if not name or ".." in name or "/" in name or "\\" in name:
@@ -109,6 +165,36 @@ def _safe_upload_name(filename: str | None, default_stem: str = "upload",
     if not re.fullmatch(r"\.[a-z0-9]{1,8}", suffix or ""):
         suffix = default_suffix
     return stem, suffix
+
+
+def _infer_reference_view_from_filename(filename: str | None) -> str | None:
+    """Infer front/back/left/right from a user reference-photo filename."""
+    stem = Path(filename or "").stem.lower()
+    tokens = set(re.findall(r"[a-z0-9]+", stem))
+    if not tokens:
+        return None
+
+    side_tokens = {"side", "profile", "view", "ref", "reference"}
+    front = bool(tokens & {"front", "frontal", "face"})
+    back = bool(tokens & {"back", "rear", "behind", "posterior"})
+    right = bool(tokens & {
+        "right", "rhs", "rightside", "rightprofile", "rightview",
+        "rside", "rprofile", "rview",
+    }) or ("r" in tokens and bool(tokens & side_tokens))
+    left = bool(tokens & {
+        "left", "lhs", "leftside", "leftprofile", "leftview",
+        "lside", "lprofile", "lview",
+    }) or ("l" in tokens and bool(tokens & side_tokens))
+
+    if front and not back:
+        return "front"
+    if back and not front:
+        return "back"
+    if right and not left:
+        return "right"
+    if left and not right:
+        return "left"
+    return None
 
 
 def _save_payload(payload: dict, out_name: str) -> Path:
@@ -470,6 +556,7 @@ def _run_pipeline(
                     debug_stem=color_photo.stem,
                     side_depth=side_depth,
                     markings_on_visible_side_only=bool(side_depth),
+                    front_photo_path=face_photo if face_photo != color_photo else None,
                 )
                 if (
                     other_side_photo_path is not None
@@ -496,10 +583,77 @@ def _run_pipeline(
                 names = [p["name"] for p in palette if int(p["id"]) in color_ids]
                 server_logs.step(f"{len(color_ids)} clean color-map colors: {names}")
                 server_logs.step(f"map shape: {color_meta.get('grid_map_shape')}")
+                base_sample = color_meta.get("base_adjustment") or {}
+                if base_sample.get("sample_hex"):
+                    server_logs.step(
+                        f"base coat: {color_meta.get('base_name')} "
+                        f"from photo {base_sample.get('sample_hex')} → LEGO {base_sample.get('matched_name')}"
+                    )
+                else:
+                    server_logs.step(f"base coat: {color_meta.get('base_name')}")
+                color_profile = color_meta.get("color_profile") or {}
+                light_sample = color_profile.get("light") or {}
+                if light_sample.get("sample_hex"):
+                    server_logs.step(
+                        "light coat: "
+                        f"{light_sample.get('sample_hex')} → LEGO {light_sample.get('matched_name')}"
+                    )
+                warm_sample = color_profile.get("warm_secondary") or {}
+                warm_regions = color_meta.get("warm_regions") or {}
+                if warm_sample.get("sample_hex"):
+                    server_logs.step(
+                        "warm coat accent: "
+                        f"{warm_sample.get('sample_hex')} → LEGO {warm_sample.get('matched_name')} "
+                        f"({warm_regions.get('components', 0)} region(s))"
+                    )
+                marking_sample = color_profile.get("marking") or {}
+                if marking_sample.get("sample_hex"):
+                    server_logs.step(
+                        "marking color: "
+                        f"{marking_sample.get('sample_hex')} → LEGO {marking_sample.get('matched_name')}"
+                    )
                 debug_path = color_meta.get("debug_path")
                 if debug_path:
                     p = Path(debug_path)
                     _record_run_artifact("pet color map", f"/photos/{p.name}", "image")
+                marking_debug_path = color_meta.get("marking_debug_path")
+                if marking_debug_path:
+                    p = Path(marking_debug_path)
+                    _record_run_artifact("pet marking mask", f"/photos/{p.name}", "image")
+                anatomy_debug_path = color_meta.get("anatomy_debug_path")
+                if anatomy_debug_path:
+                    p = Path(anatomy_debug_path)
+                    _record_run_artifact("pet anatomy map", f"/photos/{p.name}", "image")
+                anatomy_light = color_meta.get("anatomy_light") or {}
+                if anatomy_light.get("applied"):
+                    painted = anatomy_light.get("painted") or {}
+                    server_logs.step(
+                        "anatomy light: "
+                        + ", ".join(f"{k}={v}" for k, v in sorted(painted.items()))
+                    )
+                front_light = color_meta.get("front_light_profile") or {}
+                if front_light.get("applied"):
+                    server_logs.step(
+                        "front light profile: "
+                        f"muzzle={front_light.get('muzzle_light')} "
+                        f"chest={front_light.get('chest_light')} "
+                        f"paws={front_light.get('paw_light')}"
+                    )
+                markings = color_meta.get("markings") or {}
+                if markings:
+                    side_filter = markings.get("side_profile_filter") or {}
+                    server_logs.step(
+                        f"markings: {markings.get('components', 0)} component(s) via {markings.get('source')}"
+                    )
+                    if side_filter.get("applied"):
+                        server_logs.step(
+                            "side-profile marking filter: "
+                            f"head={side_filter.get('head_side')} "
+                            f"removed_head={side_filter.get('removed_head_cells', 0)} "
+                            f"removed_tail={side_filter.get('removed_tail_cells', 0)} "
+                            f"kept_body={side_filter.get('kept_body_cells', 0)} "
+                            f"kept_tail_tip={side_filter.get('kept_tail_tip_cells', 0)}"
+                        )
             except Exception as e:
                 server_logs.step(f"errored: {e}; keeping previous colors")
 
@@ -581,9 +735,9 @@ def _run_pipeline(
     return {
         "source": str(mesh_path.name),
         "resolution": resolution,
-        "grid_shape": list(grid.shape),
+        "grid_shape": list(payload_partial.get("grid_shape", list(grid.shape))),
         "pitch": float(grid.pitch),
-        "voxel_metadata": grid.metadata,
+        "voxel_metadata": payload_partial.get("voxel_metadata", grid.metadata),
         "palette": palette,
         "bricks": payload_partial["bricks"],
     }
@@ -591,10 +745,11 @@ def _run_pipeline(
 
 @app.post("/api/generate")
 async def generate(
-    photo: UploadFile = File(...),
+    photo: UploadFile | None = File(None),
     photo_back: UploadFile | None = File(None),
     photo_left: UploadFile | None = File(None),
     photo_right: UploadFile | None = File(None),
+    photo_refs: list[UploadFile] | None = File(None),
     # NEW: subject preset (pet/vehicle/building/other) - if set, overrides
     # the dozen knobs below with vetted defaults. See subject_preset.py.
     subject: str = Form(""),
@@ -646,12 +801,20 @@ async def generate(
 
     timestamp = int(time.time())
     pipeline_t0 = time.time()
+    submitted_names = [
+        getattr(photo, "filename", None),
+        getattr(photo_back, "filename", None),
+        getattr(photo_left, "filename", None),
+        getattr(photo_right, "filename", None),
+        *[getattr(uf, "filename", None) for uf in (photo_refs or [])],
+    ]
+    run_photo_name = next((name for name in submitted_names if name), "reference batch")
     # Reset artifact list at start of each run so the dev bar shows only the
     # current run's outputs (not stale links from a previous run).
-    server_logs.update_run(status="starting", photo=photo.filename,
+    server_logs.update_run(status="starting", photo=run_photo_name,
                            subject=subject, ts=timestamp, artifacts=[])
     print(f"\n══════════════════════════════════════════════════════════════════")
-    print(f"  PIPELINE START — {photo.filename!r} · subject={subject!r}")
+    print(f"  PIPELINE START — {run_photo_name!r} · subject={subject!r}")
     print(f"══════════════════════════════════════════════════════════════════")
 
     def _record_artifact(label: str, url: str, kind: str = "file"):
@@ -671,18 +834,55 @@ async def generate(
     with server_logs.stage("upload",
                             "Save uploaded photo(s) to disk as the pipeline's starting point"):
         try:
-            photo_path  = await _save(photo, "front")
-            photo_back_path  = await _save(photo_back, "back")
-            photo_left_path  = await _save(photo_left, "left")
-            photo_right_path = await _save(photo_right, "right")
+            role_paths: dict[str, Path | None] = {
+                "front": await _save(photo, "front"),
+                "back": await _save(photo_back, "back"),
+                "left": await _save(photo_left, "left"),
+                "right": await _save(photo_right, "right"),
+            }
+            batch_unknown: list[str] = []
+            batch_duplicates: list[str] = []
+            batch_assigned: list[str] = []
+            for uf in photo_refs or []:
+                if uf is None or not getattr(uf, "filename", None):
+                    continue
+                role = _infer_reference_view_from_filename(uf.filename)
+                if role is None:
+                    batch_unknown.append(uf.filename)
+                    continue
+                if role_paths.get(role) is not None:
+                    batch_duplicates.append(uf.filename)
+                    continue
+                role_paths[role] = await _save(uf, role)
+                batch_assigned.append(f"{role}={uf.filename}")
+
+            photo_path = role_paths["front"]
+            photo_back_path = role_paths["back"]
+            photo_left_path = role_paths["left"]
+            photo_right_path = role_paths["right"]
+            if photo_path is None:
+                server_logs.update_run(status="error")
+                raise HTTPException(
+                    400,
+                    "Upload needs a front/face photo. Use the Front input or include "
+                    "a batch file named like 'cat front.png'.",
+                )
             server_logs.step(f"front photo saved to {photo_path.name}")
             _record_artifact("input photo", f"/photos/{photo_path.name}", "image")
+            if batch_assigned:
+                server_logs.step(f"auto-sorted reference batch: {batch_assigned}")
+            if batch_unknown:
+                server_logs.step(f"ignored unsorted batch file(s): {batch_unknown}")
+            if batch_duplicates:
+                server_logs.step(f"ignored duplicate batch file(s): {batch_duplicates}")
             extras = [p for p in (photo_back_path, photo_left_path, photo_right_path) if p]
             if extras:
                 server_logs.step(f"extra views: {[p.name for p in extras]}")
                 for p in extras:
                     _record_artifact(f"extra view ({p.stem.split('_')[1]})",
                                      f"/photos/{p.name}", "image")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(500, f"Failed to save photo(s): {e}")
 

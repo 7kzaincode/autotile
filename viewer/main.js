@@ -60,12 +60,85 @@ const optStylize = $('opt-stylize');
 const optStylizePreset = $('opt-stylize-preset');
 const optStylizeStrength = $('opt-stylize-strength');
 const stylizeOpts = $('stylize-opts');
+const photoReferenceBatchInput = $('photo-reference-batch-input');
+const photoReferenceBatchStatus = $('photo-reference-batch-status');
 const photoBackInput = $('photo-back-input');
 const photoLeftInput = $('photo-left-input');
 const photoRightInput = $('photo-right-input');
 
 optStylize.addEventListener('change', () => {
   stylizeOpts.style.display = optStylize.checked ? 'block' : 'none';
+});
+
+function inferReferenceViewFromFilename(name) {
+  const stem = (name || '')
+    .toLowerCase()
+    .replace(/\.[^.]+$/, '');
+  const tokens = stem.match(/[a-z0-9]+/g) || [];
+  const tokenSet = new Set(tokens);
+  const compactTokens = new Set(tokens.map((t) => t.replace(/[^a-z0-9]/g, '')));
+  const hasAny = (values) => values.some((v) => tokenSet.has(v) || compactTokens.has(v));
+  const hasSideWord = hasAny(['side', 'profile', 'view', 'ref', 'reference']);
+
+  const isFront = hasAny(['front', 'frontal', 'face']);
+  const isBack = hasAny(['back', 'rear', 'behind', 'posterior']);
+  const isRight = hasAny(['right', 'rhs', 'rightside', 'rightprofile', 'rightview', 'rside', 'rprofile', 'rview']) ||
+    (tokenSet.has('r') && hasSideWord);
+  const isLeft = hasAny(['left', 'lhs', 'leftside', 'leftprofile', 'leftview', 'lside', 'lprofile', 'lview']) ||
+    (tokenSet.has('l') && hasSideWord);
+
+  if (isFront && !isBack) return 'front';
+  if (isBack && !isFront) return 'back';
+  if (isRight && !isLeft) return 'right';
+  if (isLeft && !isRight) return 'left';
+  return null;
+}
+
+function setSingleFileInput(input, file) {
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function applyReferenceBatch(files) {
+  const targets = {
+    front: photoInput,
+    back: photoBackInput,
+    left: photoLeftInput,
+    right: photoRightInput,
+  };
+  const assigned = {};
+  const unknown = [];
+  const duplicates = [];
+
+  for (const file of Array.from(files || [])) {
+    const view = inferReferenceViewFromFilename(file.name);
+    if (!view) {
+      unknown.push(file.name);
+      continue;
+    }
+    if (assigned[view]) {
+      duplicates.push(file.name);
+      continue;
+    }
+    assigned[view] = file;
+    setSingleFileInput(targets[view], file);
+  }
+
+  const views = Object.keys(assigned);
+  const bits = [];
+  if (views.length) bits.push(`sorted ${views.length}: ${views.join(', ')}`);
+  if (unknown.length) bits.push(`unknown: ${unknown.join(', ')}`);
+  if (duplicates.length) bits.push(`duplicates ignored: ${duplicates.join(', ')}`);
+  photoReferenceBatchStatus.textContent = bits.length
+    ? bits.join(' · ')
+    : 'No front/back/left/right names found in those files.';
+  photoReferenceBatchStatus.classList.toggle('err', views.length === 0);
+}
+
+photoReferenceBatchInput?.addEventListener('change', () => {
+  applyReferenceBatch(photoReferenceBatchInput.files);
 });
 
 // --- Subject preset — applies sensible defaults for the chosen subject type
