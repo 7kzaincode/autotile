@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>lego-ai</title>
+  <style>
+    /* ── Notion-identical light theme — black & white minimal ────────── */
+    :root {
+      --bg-base:        rgb(255, 255, 255);
+      --bg-canvas:      rgb(247, 247, 245);
+      --bg-panel:       rgb(255, 255, 255);
+      --bg-sidebar:     rgb(251, 251, 250);
+      --bg-input:       rgba(242, 241, 238, 0.6);
+      --bg-input-hover: rgba(242, 241, 238, 1);
+      --bg-hover:       rgba(55, 53, 47, 0.06);
+      --bg-active:      rgba(55, 53, 47, 0.09);
+      --border:         rgba(55, 53, 47, 0.09);
+      --border-strong:  rgba(55, 53, 47, 0.16);
+      --text:           rgb(55, 53, 47);
+      --text-dim:       rgba(55, 53, 47, 0.65);
+      --text-faint:     rgba(55, 53, 47, 0.45);
+      --text-emph:      rgb(28, 27, 24);
+      /* Primary action button — black, not blue */
+      --accent:         rgb(28, 27, 24);
+      --accent-hover:   rgb(55, 53, 47);
+      --accent-bg:      rgba(28, 27, 24, 0.06);
+      --danger:         rgb(212, 76, 71);
+      --danger-bg:      rgba(212, 76, 71, 0.1);
+      --success:        rgb(68, 131, 97);
+      --warn:           rgb(217, 115, 13);
+      /* Notion's actual popup shadow */
+      --shadow-md:      rgba(15, 15, 15, 0.05) 0px 0px 0px 1px,
+                        rgba(15, 15, 15, 0.1) 0px 3px 6px,
+                        rgba(15, 15, 15, 0.2) 0px 9px 24px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0; height: 100%;
+        background: var(--bg-base); color: var(--text);
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                     "Segoe UI", Helvetica, "Apple Color Emoji", Arial,
+                     sans-serif, "Apple Color Emoji";
+        font-size: 14px; line-height: 1.5; overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        font-feature-settings: "ss03";
+    }
+    #app { position: fixed; inset: 0; background: var(--bg-canvas); }
+
+    /* ── Generic panel ─────────────────────────────────────────────────── */
+    .panel {
+        position: fixed; background: var(--bg-panel);
+        border-radius: 6px; box-shadow: var(--shadow-md);
+        font-size: 14px;
+    }
+    .panel h3 {
+        margin: 0; padding: 14px 20px 10px;
+        font-size: 14px; font-weight: 600; color: var(--text-emph);
+    }
+
+    /* ── HUD (top-left, info only) ─────────────────────────────────────── */
+    #hud {
+        top: 16px; left: 16px; min-width: 200px;
+        padding: 12px 16px; font-size: 12px;
+        pointer-events: none; color: var(--text-dim);
+    }
+    #hud > div { margin: 2px 0; }
+    #hud b { color: var(--text-emph); font-weight: 500; }
+    #hud .hint { font-size: 11px; color: var(--text-faint); margin-top: 8px; line-height: 1.6; }
+
+    /* ── Generate panel (right side) ───────────────────────────────────── */
+    #generate {
+        top: 16px; right: 16px; width: 340px;
+        max-height: calc(100vh - 16px - 44px);
+        overflow-y: auto; overflow-x: hidden;
+        /* Horizontal padding HERE means children with width:100% fill
+           exactly the padded area — no overflow off the right edge. */
+        padding: 0 24px 20px;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    #generate::-webkit-scrollbar { display: none; }
+
+    /* No more child margins — parent padding handles inset.
+       h3 uses negative margins to extend its bottom border edge-to-edge. */
+    #generate > * { margin-left: 0; margin-right: 0; }
+    #generate h3 {
+        margin: 0 -24px 0;
+        padding: 16px 24px 12px;
+        font-size: 15px; font-weight: 600;
+        border-bottom: 1px solid var(--border);
+    }
+
+    /* Section headers — Title Case, no ALL CAPS */
+    #generate h4 {
+        margin: 16px 0 6px; padding: 0;
+        font-size: 13px; font-weight: 600;
+        color: var(--text-emph);
+        letter-spacing: 0;
+    }
+    #generate h4:first-of-type { margin-top: 16px; }
+
+    /* Labels above inputs */
+    #generate label {
+        display: block; margin: 8px 0 4px;
+        font-size: 13px; color: var(--text-dim);
+        font-weight: 400;
+    }
+
+    /* Checkbox labels — inline with input */
+    #generate label:has(> input[type="checkbox"]) {
+        color: var(--text); font-size: 14px;
+        margin: 2px -6px; padding: 4px 6px;
+        cursor: pointer; user-select: none;
+        border-radius: 4px;
+        display: flex; align-items: center; gap: 8px;
+        transition: background 0.08s;
+    }
+    #generate label:has(> input[type="checkbox"]):hover {
+        background: var(--bg-hover);
+    }
+    #generate input[type="checkbox"] {
+        margin: 0; accent-color: var(--accent);
+        width: 14px; height: 14px;
+    }
+
+    /* Text/file inputs and selects */
+    #generate input[type="text"],
+    #generate select {
+        width: 100%;
+        background: var(--bg-input); color: var(--text);
+        border: none;
+        padding: 6px 8px; border-radius: 4px;
+        font-size: 14px; font-family: inherit;
+        box-shadow: inset 0 0 0 1px var(--border);
+        transition: box-shadow 0.12s, background 0.12s;
+    }
+    #generate input[type="text"]:hover,
+    #generate select:hover {
+        background: var(--bg-input-hover);
+    }
+    #generate input[type="text"]:focus,
+    #generate select:focus {
+        outline: none;
+        box-shadow: inset 0 0 0 1px var(--accent);
+        background: var(--bg-panel);
+    }
+
+    /* Custom file input — Notion style */
+    #generate input[type="file"] {
+        display: block; width: 100%;
+        font-size: 13px; color: var(--text-dim);
+        padding: 0; border: none; background: transparent;
+        font-family: inherit; cursor: pointer;
+    }
+    #generate input[type="file"]::file-selector-button {
+        background: var(--bg-input);
+        border: none;
+        box-shadow: inset 0 0 0 1px var(--border);
+        padding: 6px 12px; margin-right: 10px;
+        border-radius: 4px;
+        font-size: 13px; font-family: inherit;
+        color: var(--text); cursor: pointer;
+        transition: background 0.12s;
+    }
+    #generate input[type="file"]::file-selector-button:hover {
+        background: var(--bg-input-hover);
+    }
+
+    /* Select dropdown arrow */
+    #generate select {
+        cursor: pointer; appearance: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%23787774' d='M5 6L0 0h10z'/></svg>");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+        padding-right: 26px;
+    }
+
+    /* Two-column row */
+    #generate .row { display: flex; gap: 10px; }
+    #generate .row > div { flex: 1; min-width: 0; }
+
+    /* Disclosures — Notion-style chevron, no card */
+    #generate details { margin: 12px 0 4px; padding: 0; }
+    #generate details summary {
+        cursor: pointer; padding: 6px 8px; margin: 0 -8px;
+        border-radius: 4px;
+        font-size: 13px; color: var(--text-dim); font-weight: 500;
+        user-select: none; list-style: none;
+        display: flex; align-items: center; gap: 6px;
+        transition: background 0.08s, color 0.08s;
+    }
+    #generate details summary::-webkit-details-marker { display: none; }
+    #generate details summary::before {
+        content: "▸"; color: var(--text-faint);
+        font-size: 11px; transition: transform 0.18s;
+        display: inline-block; width: 10px;
+    }
+    #generate details[open] > summary::before { transform: rotate(90deg); }
+    #generate details summary:hover {
+        background: var(--bg-hover); color: var(--text);
+    }
+    #generate details > *:not(summary) { margin: 4px 0; }
+
+    /* Notion-style hint text */
+    .form-hint {
+        font-size: 12px; color: var(--text-faint);
+        margin: 4px 0 0; line-height: 1.5;
+    }
+    /* Indented sub-section (e.g. "region count" under semantic toggle) */
+    #generate .form-sub {
+        margin-left: 22px;
+        padding-left: 10px;
+        border-left: 1px solid var(--border);
+    }
+    /* Inline checkbox row (e.g. post-processing toggles) */
+    #generate .form-inline {
+        display: flex; flex-wrap: wrap; gap: 4px 12px;
+        margin: 4px 0;
+    }
+    #generate .form-inline label {
+        margin: 0; flex: 0 0 auto;
+    }
+
+    /* Buttons */
+    .btn {
+        background: var(--accent); color: #fff; border: none;
+        padding: 10px 16px; border-radius: 5px;
+        cursor: pointer; font-size: 14px; font-weight: 500;
+        width: 100%; margin-top: 10px;
+        transition: background 0.12s, opacity 0.12s;
+        font-family: inherit; line-height: 1.3;
+    }
+    .btn:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.secondary {
+        background: transparent; color: var(--text);
+        box-shadow: inset 0 0 0 1px var(--border-strong);
+        margin-top: 6px; font-weight: 400;
+    }
+    .btn.secondary:hover:not(:disabled) {
+        background: var(--bg-hover);
+    }
+    .btn.small { font-size: 12px; padding: 5px 12px; width: auto; }
+    .btn.danger {
+        background: var(--danger-bg); color: var(--danger);
+        box-shadow: inset 0 0 0 1px rgba(212,76,71,0.25);
+    }
+    .btn.danger:hover:not(:disabled) {
+        background: rgba(212,76,71,0.16);
+    }
+
+    #status {
+        margin: 6px 20px 10px; font-size: 13px; min-height: 18px;
+        color: var(--text-dim);
+    }
+    .divider { height: 1px; background: var(--border); margin: 14px 20px; }
+    #status.err  { color: var(--danger); }
+    #status.ok   { color: var(--success); }
+    #status.warn { color: var(--warn); }
+    .spinner {
+        display: inline-block; width: 12px; height: 12px;
+        border: 2px solid var(--bg-hover); border-top-color: var(--text);
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+        vertical-align: -2px; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Selection / palette / parts-list */
+    #selection { bottom: 56px; left: 16px; min-width: 240px; display: none;
+                 padding: 12px 16px; font-size: 12px; }
+    #selection.visible { display: block; }
+    #selection b { color: var(--text-emph); }
+    #palette { bottom: 56px; right: 352px; max-width: 360px; display: none;
+               padding: 12px 16px; }
+    #palette.visible { display: block; }
+    #palette-grid { display: grid; grid-template-columns: repeat(8, 28px);
+                    gap: 4px; margin-top: 8px; }
+    .swatch { width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
+              border: 2px solid transparent; box-sizing: border-box;
+              transition: transform 0.08s; }
+    .swatch:hover { border-color: var(--text-emph); transform: scale(1.06); }
+    .swatch.active { border-color: var(--text-emph);
+                     box-shadow: 0 0 0 2px var(--bg-base) inset; }
+    .hint { color: var(--text-faint); font-size: 11px; }
+    #parts-list { bottom: 56px; left: 280px; max-width: 380px; max-height: 50vh;
+                  overflow-y: auto; display: none; padding: 0 16px 16px; }
+    #parts-list.visible { display: block; }
+    #parts-table { width: 100%; border-collapse: collapse; margin-top: 8px;
+                   font-size: 12px; }
+    #parts-table th, #parts-table td { padding: 5px 6px; text-align: left;
+                                        border-bottom: 1px solid var(--border); }
+    #parts-table th { font-weight: 500; color: var(--text-faint);
+                      text-transform: uppercase; font-size: 10px;
+                      letter-spacing: 0.5px; }
+    #parts-table .qty { text-align: right; font-weight: 500; color: var(--text-emph); }
+    .color-dot { display: inline-block; width: 10px; height: 10px;
+                 border-radius: 50%; vertical-align: middle; margin-right: 6px;
+                 border: 1px solid var(--border-strong); }
+
+    /* Toolbar */
+    #toolbar { top: 16px; left: 240px; padding: 6px 8px; display: none; }
+    #toolbar.visible { display: block; }
+    #toolbar button { margin-right: 4px; padding: 5px 10px; font-size: 12px;
+                      background: transparent; color: var(--text);
+                      border: 1px solid var(--border); border-radius: 4px;
+                      cursor: pointer; font-family: inherit;
+                      transition: background 0.12s, border-color 0.12s; }
+    #toolbar button:hover:not(:disabled) { background: var(--bg-hover);
+                                           border-color: var(--border-strong); }
+    #toolbar button:disabled { opacity: 0.35; cursor: not-allowed; }
+    #toolbar .toggle.active { background: var(--accent-bg);
+                              border-color: var(--accent);
+                              color: var(--accent); }
+    kbd { background: var(--bg-elev); padding: 1px 5px; border-radius: 3px;
+          font-size: 11px; border: 1px solid var(--border-strong);
+          font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+    /* ── Dev bar (logs / cache / status) ───────────────────────────────── */
+    #devbar { position: fixed; bottom: 0; left: 0; right: 0;
+              background: var(--bg-base); border-top: 1px solid var(--border);
+              z-index: 50; transition: height 0.18s ease-out; }
+    #devbar.collapsed { height: 36px; }
+    #devbar.expanded { height: 280px; }
+    #devbar-header { display: flex; align-items: center; gap: 8px;
+                     padding: 0 16px; font-size: 12px; cursor: pointer;
+                     user-select: none; height: 36px; box-sizing: border-box;
+                     color: var(--text-dim); }
+    #devbar-header:hover { background: var(--bg-panel); color: var(--text); }
+    #devbar-header b { color: var(--text-emph); font-weight: 500; }
+    #devbar-header .arrow { display: inline-block; width: 12px;
+                            color: var(--text-faint);
+                            transition: transform 0.18s; }
+    #devbar.expanded #devbar-header .arrow { transform: rotate(90deg); }
+    #devbar-header .chip {
+        background: var(--bg-input);
+        box-shadow: inset 0 0 0 1px var(--border);
+        padding: 2px 10px; border-radius: 10px;
+        font-size: 11px; color: var(--text-dim);
+        white-space: nowrap;
+    }
+    #devbar-header .chip.green {
+        color: var(--success);
+        background: rgba(68, 131, 97, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(68, 131, 97, 0.2);
+    }
+    #devbar-header .chip.warn  {
+        color: var(--warn);
+        background: rgba(217, 115, 13, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(217, 115, 13, 0.2);
+    }
+    #devbar-header .chip.err   {
+        color: var(--danger);
+        background: var(--danger-bg);
+        box-shadow: inset 0 0 0 1px rgba(212, 76, 71, 0.25);
+    }
+    #devbar-header .grow { flex: 1; }
+    #devbar-body { display: none; height: calc(100% - 36px); overflow: hidden;
+                   border-top: 1px solid var(--border); background: var(--bg-base); }
+    #devbar.expanded #devbar-body { display: flex; }
+    #devbar-tabs { width: 120px; background: var(--bg-panel);
+                   border-right: 1px solid var(--border);
+                   display: flex; flex-direction: column; padding: 8px 0; }
+    .devbar-tab { padding: 8px 16px; font-size: 13px; cursor: pointer;
+                  color: var(--text-dim); border-left: 2px solid transparent;
+                  transition: background 0.12s, color 0.12s; user-select: none; }
+    .devbar-tab:hover { background: var(--bg-hover); color: var(--text); }
+    .devbar-tab.active { background: var(--bg-base); color: var(--text-emph);
+                         border-left-color: var(--accent); }
+    .devbar-pane { flex: 1; overflow: hidden; display: none; flex-direction: column; }
+    .devbar-pane.active { display: flex; }
+    #log-toolbar { padding: 8px 16px; border-bottom: 1px solid var(--border);
+                   display: flex; gap: 8px; align-items: center; font-size: 12px; }
+    #log-toolbar label { color: var(--text-dim); }
+    #log-toolbar input, #log-toolbar select {
+        background: var(--bg-panel); color: var(--text);
+        border: 1px solid var(--border); border-radius: 4px;
+        padding: 4px 8px; font-size: 12px; font-family: inherit; }
+    #log-toolbar input:focus, #log-toolbar select:focus {
+        outline: none; border-color: var(--accent); }
+    #log-list { flex: 1; overflow-y: auto; padding: 8px 16px;
+                font-family: ui-monospace, "SF Mono", Menlo, monospace;
+                font-size: 12px; line-height: 1.6; }
+    .log-row { padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+    .log-row .ts { color: var(--text-faint); margin-right: 8px; }
+    .log-row.info  { color: var(--text); }
+    .log-row.warn  { color: var(--warn); }
+    .log-row.error { color: var(--danger); }
+    #cache-pane, #status-pane { flex: 1; overflow-y: auto; padding: 16px 20px;
+                                font-size: 13px; line-height: 1.7; }
+    #status-pane > div { padding: 4px 0; color: var(--text); }
+    #status-pane b { color: var(--text-faint); font-weight: 500;
+                     display: inline-block; min-width: 140px; }
+    .cache-card { background: var(--bg-panel); border: 1px solid var(--border);
+                  border-radius: 6px; padding: 12px 16px; margin: 8px 0;
+                  display: flex; align-items: center; gap: 16px;
+                  transition: border-color 0.12s; }
+    .cache-card:hover { border-color: var(--border-strong); }
+    .cache-card .name { font-weight: 500; color: var(--text-emph); min-width: 140px; }
+    .cache-card .stats { flex: 1; color: var(--text-dim); font-size: 12px; }
+    .cache-card .stats .hint { display: block; margin-top: 2px; }
+
+    /* Scrollbars — Notion-thin, only visible on hover */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+        background: transparent; border-radius: 3px;
+        transition: background 0.2s;
+    }
+    *:hover > ::-webkit-scrollbar-thumb,
+    #generate:hover::-webkit-scrollbar-thumb,
+    #log-list:hover::-webkit-scrollbar-thumb,
+    #cache-pane:hover::-webkit-scrollbar-thumb {
+        background: rgba(55, 53, 47, 0.16);
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(55, 53, 47, 0.28) !important; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="hud" class="panel">
+    <div>file: <b id="hud-file">—</b></div>
+    <div>grid: <b id="hud-grid">—</b></div>
+    <div>bricks: <b id="hud-bricks">—</b></div>
+    <div>unsupported: <b id="hud-floating">—</b></div>
+    <img id="hud-thumb" style="display:none; max-width:120px; max-height:90px; border-radius:4px; margin-top:6px; opacity:0.9" />
+    <div class="hint" style="margin-top:6px">drag · scroll · right-drag · click to select · <kbd>shift</kbd>+click multi · <kbd>ctrl</kbd>+<kbd>z</kbd> undo</div>
+  </div>
+
+  <div id="toolbar" class="panel">
+    <button id="return-lego-btn" disabled hidden title="Return from raw mesh preview to the last LEGO brick model">LEGO view</button>
+    <button id="undo-btn" disabled title="Undo (Cmd/Ctrl+Z)">↶ undo</button>
+    <button id="redo-btn" disabled title="Redo (Cmd/Ctrl+Shift+Z)">↷ redo</button>
+    <button id="show-floating-btn" class="toggle" title="Highlight floating/unsupported bricks">flag floating</button>
+    <button id="parts-toggle-btn" class="toggle">parts list</button>
+    <button id="download-ldraw-btn" title=".ldr — open in LeoCAD / LPub3D / BrickLink Studio">.ldr</button>
+    <button id="download-obj-btn" title=".obj — 3D-printable mesh, Blender-compatible">.obj</button>
+    <button id="download-csv-btn" title="Parts list CSV (BrickLink-compatible columns)">.csv</button>
+    <button id="download-bricklink-btn" title="BrickLink Wanted-List XML (paste into bricklink.com)">bricklink xml</button>
+  </div>
+
+  <div id="generate" class="panel">
+    <h3>Generate from Photo</h3>
+
+    <label>Front Face Photo (Required)</label>
+    <input id="photo-input" type="file" accept="image/*" />
+    <details open>
+      <summary>Body / Side Photos</summary>
+      <div class="form-hint">Pets need at least one side full-body photo. Add both sides when markings are different.</div>
+      <label>Back</label>
+      <input id="photo-back-input" type="file" accept="image/*" />
+      <label>Left Side Full Body</label>
+      <input id="photo-left-input" type="file" accept="image/*" />
+      <label>Right Side Full Body</label>
+      <input id="photo-right-input" type="file" accept="image/*" />
+    </details>
+
+    <h4>Subject</h4>
+    <select id="subject-select">
+      <option value="pet" selected>🐰 Pet / Organic — symmetric, with eyes</option>
+      <option value="vehicle">🚢 Vehicle / Ship — symmetric, many colors</option>
+      <option value="building">🏠 Building / Architecture — blocky, asymmetric</option>
+      <option value="other">📦 Other / Unsure</option>
+    </select>
+    <div class="form-hint">Sets sensible defaults for the chosen subject. Override below.</div>
+
+    <h4>Core Settings</h4>
+    <div class="row">
+      <div>
+        <label>Resolution</label>
+        <select id="resolution-select">
+          <option value="32">32 (Chunky)</option>
+          <option value="48">48 (Detail)</option>
+          <option value="64" selected>64 (Premium)</option>
+        </select>
+      </div>
+      <div>
+        <label>Model</label>
+        <select id="model-select">
+          <option value="auto" selected>Auto (Smart Fallback)</option>
+          <option value="trellis-2-hf">TRELLIS.2 (HF)</option>
+          <option value="hunyuan3d-2.1-hf">Hunyuan3D 2.1 (HF)</option>
+          <option value="trellis-hf">TRELLIS v1 (HF)</option>
+          <option value="hunyuan3d-textured">Hunyuan3D-2 Textured (HF)</option>
+          <option value="sf3d-hf">SF3D (HF)</option>
+          <option value="triposr-hf">TripoSR (HF, Fast)</option>
+          <option value="trellis">TRELLIS (Replicate, Paid)</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="generate-btn" class="btn">Generate</button>
+    <button id="redecompose-btn" class="btn secondary" disabled>Rebuild With New Settings (no AI)</button>
+    <div id="status"></div>
+
+    <details>
+      <summary>Advanced — Color, Geometry, Post-Processing</summary>
+
+      <h4>Geometry</h4>
+      <label><input type="checkbox" id="opt-rembg" checked /> Remove background (BRIA-RMBG, ~5s)</label>
+      <label><input type="checkbox" id="opt-mirror-geom" checked /> Mirror geometry L↔R (fill missing limbs)</label>
+      <label><input type="checkbox" id="opt-voxel-symmetry" checked /> Enforce symmetry during voxelize</label>
+      <label><input type="checkbox" id="opt-voxel-hole-fill" checked /> Fill small voxel holes</label>
+      <label><input type="checkbox" id="opt-hollow" checked /> Hollow shell (drops piece count ~70%)</label>
+      <label><input type="checkbox" id="opt-drop-floaters" checked /> Drop floating bricks</label>
+      <label>Mesh smoothing (kills TRELLIS bumps)</label>
+      <select id="opt-smooth">
+        <option value="0">Off</option>
+        <option value="2" selected>Light (2 iters)</option>
+        <option value="5">Medium (5 iters)</option>
+        <option value="10">Heavy (10 iters)</option>
+      </select>
+      <label>Up axis</label>
+      <select id="up-select">
+        <option value="auto" selected>Auto (detect from mesh)</option>
+        <option value="y">Y</option>
+        <option value="z">Z</option>
+        <option value="x">X</option>
+      </select>
+      <label>Voxel anti-aliasing</label>
+      <select id="opt-voxel-supersample">
+        <option value="0" selected>Auto (2x at 48 or lower)</option>
+        <option value="1">Off</option>
+        <option value="2">2x Smooth</option>
+      </select>
+
+      <h4>Color</h4>
+      <label><input type="checkbox" id="opt-mirror" checked /> Mirror colors L↔R</label>
+      <label><input type="checkbox" id="opt-gpt-vision" checked /> GPT-4o-mini vision (~$0.005, cached)</label>
+      <label><input type="checkbox" id="opt-use-sam" checked /> SAM 2 pixel-precise masks (local, ~1-2s, free)</label>
+      <label><input type="checkbox" id="opt-semantic-color" checked /> Semantic segmentation (k-means fallback)</label>
+      <div class="form-sub">
+        <label>Region count</label>
+        <select id="opt-semantic-regions">
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5" selected>5 (Pets)</option>
+          <option value="6">6</option>
+          <option value="8">8</option>
+          <option value="10">10 (Vehicles)</option>
+          <option value="12">12 (Detailed)</option>
+        </select>
+      </div>
+      <div class="row">
+        <div>
+          <label>Max colors</label>
+          <select id="opt-max-colors">
+            <option value="0">Unlimited</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="8" selected>8</option>
+            <option value="10">10</option>
+            <option value="14">14</option>
+          </select>
+        </div>
+        <div>
+          <label>Pre-cluster</label>
+          <select id="opt-pre-cluster">
+            <option value="0">Off</option>
+            <option value="8">8</option>
+            <option value="12" selected>12</option>
+            <option value="16">16</option>
+            <option value="20">20</option>
+          </select>
+        </div>
+      </div>
+      <label>Back of model</label>
+      <select id="opt-back-mode">
+        <option value="uv" selected>UV (photo-as-texture)</option>
+        <option value="front_only">Front only (no mirror)</option>
+        <option value="through">Project through (mirror)</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Photo colors (k)</label>
+          <select id="opt-cluster">
+            <option value="0">Off</option>
+            <option value="6">6</option>
+            <option value="8" selected>8</option>
+            <option value="12">12</option>
+          </select>
+        </div>
+        <div>
+          <label>Blur</label>
+          <select id="opt-blur">
+            <option value="0">Off</option>
+            <option value="1">Light</option>
+            <option value="2" selected>Medium</option>
+            <option value="4">Heavy</option>
+          </select>
+        </div>
+      </div>
+
+      <h4>Features</h4>
+      <label><input type="checkbox" id="opt-accent-features" checked /> Add eye/feature accents</label>
+
+      <h4>Post-Processing</h4>
+      <div class="form-inline">
+        <label><input type="checkbox" id="opt-tiles" checked /> Tiles</label>
+        <label><input type="checkbox" id="opt-slopes" checked /> Slopes</label>
+        <label><input type="checkbox" id="opt-slope-inv" checked /> Inv-slopes</label>
+        <label><input type="checkbox" id="opt-baseplate" /> Baseplate</label>
+      </div>
+      <label><input type="checkbox" id="opt-darken-edges" /> Darken silhouette outline</label>
+      <label><input type="checkbox" id="opt-auto-support" /> Auto-support floaters</label>
+
+      <h4>Rarely Needed</h4>
+      <label><input type="checkbox" id="opt-stylize" /> LEGO-ify input (SDXL pre-stylize — often hurts)</label>
+      <div id="stylize-opts" class="form-sub" style="display:none">
+        <label>Preset</label>
+        <select id="opt-stylize-preset">
+          <option value="lego" selected>LEGO</option>
+          <option value="toy">3D Toy</option>
+          <option value="cartoon">Cartoon</option>
+          <option value="render">Soft Render</option>
+        </select>
+        <label>Strength</label>
+        <select id="opt-stylize-strength">
+          <option value="0.3">Subtle</option>
+          <option value="0.5" selected>Medium</option>
+          <option value="0.7">Strong</option>
+        </select>
+      </div>
+      <label><input type="checkbox" id="opt-use-photo-palette" /> Use photo's palette (legacy)</label>
+      <div id="photo-palette-opts" class="form-sub" style="display:none">
+        <label>Palette size</label>
+        <select id="opt-photo-palette-size">
+          <option value="4">4</option>
+          <option value="6" selected>6</option>
+          <option value="8">8</option>
+        </select>
+      </div>
+      <label>Budget preset (overrides resolution/colors)</label>
+      <select id="opt-budget">
+        <option value="" selected>Off — manual</option>
+        <option value="tiny">Tiny — ~300 pcs · $40</option>
+        <option value="compact">Compact — ~800 pcs · $80</option>
+        <option value="standard">Standard — ~1500 pcs · $150</option>
+        <option value="detailed">Detailed — ~3000 pcs · $300</option>
+        <option value="premium">Premium — ~5000 pcs · $500</option>
+      </select>
+      <!-- legacy / unused but keep IDs so main.js doesn't break -->
+      <input type="hidden" id="opt-region-colors" value="0" />
+    </details>
+
+    <details class="io-section">
+      <summary>Import / Export JSON</summary>
+      <label>Load existing</label>
+      <input id="file-input" type="file" accept=".json" />
+      <button id="download-btn" class="btn secondary">Download current JSON</button>
+    </details>
+  </div>
+
+  <div id="selection" class="panel">
+    <div>selected: <b id="sel-type">—</b> at <b id="sel-pos">—</b></div>
+    <div>color: <b id="sel-color">—</b></div>
+    <div class="hint" style="margin-top:6px">
+      <kbd>delete</kbd> remove · <kbd>esc</kbd> deselect · <kbd>shift</kbd>+click add to selection
+    </div>
+  </div>
+
+  <div id="palette" class="panel">
+    <div>recolor selected brick(s):</div>
+    <div id="palette-grid"></div>
+  </div>
+
+  <div id="parts-list" class="panel">
+    <h3>Parts list</h3>
+    <div><b id="parts-total">0</b> bricks · <b id="parts-unique">0</b> SKUs · est. <b id="parts-cost">$0</b> · build <b id="parts-time">0m</b></div>
+    <table id="parts-table">
+      <thead><tr><th>Part</th><th>Color</th><th class="qty">Qty</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Dev bar: live logs + cache + status -->
+  <div id="devbar" class="collapsed">
+    <div id="devbar-header">
+      <span class="arrow">▸</span>
+      <b>dev</b>
+      <span id="devbar-pipeline-chip" class="chip">idle</span>
+      <span id="devbar-gpt-chip" class="chip">gpt cache: —</span>
+      <span id="devbar-mesh-chip" class="chip">meshes: —</span>
+      <span id="devbar-recent" class="hint" style="margin-left:8px"></span>
+      <span class="grow"></span>
+      <span class="hint">click to expand</span>
+    </div>
+    <div id="devbar-body">
+      <div id="devbar-tabs">
+        <div class="devbar-tab active" data-tab="logs">Logs</div>
+        <div class="devbar-tab" data-tab="cache">Cache</div>
+        <div class="devbar-tab" data-tab="status">Run</div>
+      </div>
+      <div class="devbar-pane active" data-tab="logs">
+        <div id="log-toolbar">
+          <label><input type="checkbox" id="log-autoscroll" checked /> auto-scroll</label>
+          <select id="log-level">
+            <option value="">all</option>
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </select>
+          <input id="log-filter" type="text" placeholder="filter…" style="width: 200px" />
+          <span class="grow" style="flex:1"></span>
+          <button id="log-clear-btn" class="btn small danger" style="width:auto;margin:0">clear</button>
+        </div>
+        <div id="log-list"></div>
+      </div>
+      <div class="devbar-pane" data-tab="cache">
+        <div id="cache-pane"></div>
+      </div>
+      <div class="devbar-pane" data-tab="status">
+        <div id="status-pane"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

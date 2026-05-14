@@ -1,0 +1,24 @@
+# Secrets / local env
+.env
+.env.*
+!.env.example
+.venv/
+
+# Python / test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Generated pipeline artifacts and uploaded photos
+output/
+test_meshes/
+test_photos/
+gpt_cache/
+sam_cache/
+
+# Local/private photo sets
+animal testing photos/
+
+# OS / editor noise
+.DS_Store
